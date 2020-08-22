@@ -12,24 +12,22 @@ class ViewController: UIViewController {
     
     @IBOutlet var label: UILabel!
     
-    private let network = Network()
+    private let service = AppService()
 
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        let url: String = "https://jsonplaceholder.typicode.com/todos/1"
         
-        network.network(url: url) { [weak self] data, response, error in
+        
+        service.todo(id: 1) { [weak self] result in
             guard let `self` = self else { return }
             
-            if let error = error {
+            switch result {
+            case .success(let todo):
+                self.label.text = todo.title
+            case .failure(let error):
                 self.label.text = error.localizedDescription
-                return
             }
-            
-            guard let data = data else { return }
-            let string = String(data: data, encoding: .utf8)
-            self.label.text = string
         }
     }
 
@@ -37,15 +35,86 @@ class ViewController: UIViewController {
 
 }
 
-class Network {
+struct Todo: Codable {
+    let id: Int
+    let title: String
+    let completed: Bool
+}
+
+enum JustError: Error {
+    case just
+    case couldNotDecode
+    case invalidData
     
-    func network(url: String, completion: ((Data?, URLResponse?, Error?) -> Void)? = nil) {
-        guard let url = URL(string: url) else { return }
-        
-        URLSession.shared.dataTask(with: url) { data, response, error in
+    var localizedDescription: String {
+        switch self {
+        case .just:
+            return "just"
+        case .couldNotDecode:
+            return "couldNotDecode"
+        case .invalidData:
+            return "invalidData"
+        }
+    }
+}
+
+class Network {
+    private let session: URLSession = URLSession.shared
+    
+    func dataTask(url: URL, completion: @escaping (Result<(Data?, HTTPURLResponse), Error>) -> Void) {
+        session.dataTask(with: url) { data, response, error in
             DispatchQueue.main.async {
-                completion?(data, response, error)
+                if let error = error {
+                    return completion(.failure(error))
+                }
+                
+                guard let response = response as? HTTPURLResponse else {
+                    return completion(.failure(JustError.just))
+                }
+                
+                switch response.statusCode {
+                case 200..<300:
+                    completion(.success((data, response)))
+                default:
+                    completion(.failure(JustError.just))
+                }
             }
         }.resume()
+    }
+}
+
+class AppService {
+    private let network: Network = Network()
+    private let baseURL: String = "https://jsonplaceholder.typicode.com/"
+    
+    func todo(id: Int, completion: ((Result<Todo, Error>) -> Void)? = nil) {
+        let urlString: String = baseURL + "todos/\(id)"
+        guard let url = URL(string: urlString) else { return }
+        
+        network.dataTask(url: url) { result in
+            let decoder = JSONDecoder()
+            switch result {
+            case .success(let (data, _)):
+                
+                guard let data = data else {
+                    completion?(.failure(JustError.invalidData))
+                    return
+                }
+                
+                guard let todo: Todo = try? decoder.decode(Todo.self, from: data) else {
+                    completion?(.failure(JustError.couldNotDecode))
+                    return
+                }
+                
+                completion?(.success(todo))
+                
+            case .failure(let err):
+                completion?(.failure(err))
+            }
+        }
+    }
+    
+    func createTodo(todo: Todo, completion: ((Result<Todo, Error>) -> Void)? = nil) {
+        
     }
 }
